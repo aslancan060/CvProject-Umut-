@@ -1,4 +1,5 @@
-﻿using CvProject.Data;
+﻿using System.Data.SqlClient; // SQL hatalarını yakalamak için ekle
+using CvProject.Data;
 using CvProject.DTOs;
 using CvProject.Interfaces;
 using System.Net;
@@ -11,7 +12,7 @@ namespace CvProject.Services
         private readonly DbHelper _dbHelper;
         private readonly IConfiguration _configuration;
 
-        
+        // Basit kelime filtresi (isteğe bağlı, SQL trigger’dan bağımsız)
         private readonly string[] _bannedWords = new[]
         {
             "sal...", "apt...", "mal", "ger...", "or...", "ya...", "pi...", "hakaret", "küf...", "peze...",
@@ -26,17 +27,26 @@ namespace CvProject.Services
 
         public async Task<bool> SaveAndSendAsync(ContactDto contactDto)
         {
-           
+            // 1️⃣ Email formatı doğru mu?
             if (!IsValidEmail(contactDto.Email))
-                return false; // Geçersiz email — DB’ye yazma, mail gönderme
+                throw new Exception("Invalid email format.");
 
-            
+            // 2️⃣ İsteğe bağlı uygulama içi kelime filtresi
             if (ContainsBannedWords(contactDto.Name) || ContainsBannedWords(contactDto.Message))
-                return false; // Uygunsuz içerik varsa DB’ye yazma, mail gönderme
+                throw new Exception("Message contains forbidden words.");
 
-        
-            await _dbHelper.InsertContactAsync(contactDto.Name, contactDto.Email, contactDto.Message);
+            try
+            {
+                // 3️⃣ DB insert — SQL trigger burada RAISERROR atabilir
+                await _dbHelper.InsertContactAsync(contactDto.Name, contactDto.Email, contactDto.Message);
+            }
+            catch (SqlException ex)
+            {
+                // SQL trigger’daki RAISERROR mesajını yakala ve API’ye gönder
+                throw new Exception(ex.Message);
+            }
 
+            // 4️⃣ Mail gönder
             var smtpSection = _configuration.GetSection("SmtpSettings");
             using var smtp = new SmtpClient(smtpSection["Host"], int.Parse(smtpSection["Port"] ?? "587"))
             {
@@ -47,8 +57,8 @@ namespace CvProject.Services
             var mail = new MailMessage
             {
                 From = new MailAddress(smtpSection["From"] ?? smtpSection["Username"]),
-                Subject = $"Yeni İletişim Mesajı: {contactDto.Name}",
-                Body = $"Gönderen: {contactDto.Name}\nEmail: {contactDto.Email}\n\nMesaj:\n{contactDto.Message}"
+                Subject = $"New Contact Message: {contactDto.Name}",
+                Body = $"Sender: {contactDto.Name}\nEmail: {contactDto.Email}\n\nMessage:\n{contactDto.Message}"
             };
             mail.To.Add(smtpSection["To"]);
 
@@ -57,10 +67,6 @@ namespace CvProject.Services
             return true;
         }
 
-    
-        /// <summary>
-        /// Email formatı doğru mu kontrolü
-        /// </summary>
         private bool IsValidEmail(string email)
         {
             if (string.IsNullOrWhiteSpace(email)) return false;
@@ -75,9 +81,6 @@ namespace CvProject.Services
             }
         }
 
-        /// <summary>
-        /// Yasaklı kelimeleri içeriyor mu kontrolü
-        /// </summary>
         private bool ContainsBannedWords(string input)
         {
             if (string.IsNullOrWhiteSpace(input)) return false;

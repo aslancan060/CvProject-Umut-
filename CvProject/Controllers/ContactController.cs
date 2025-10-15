@@ -18,11 +18,19 @@ namespace CvProject.Controllers
         [HttpPost]
         public async Task<IActionResult> Post([FromBody] ContactDto dto)
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
 
-            var result = await _contactService.SaveAndSendAsync(dto);
-            return result ? Ok(new { message = "Message sent successfully. Thank you! 🙌" })
-                          : StatusCode(500, "Failed to send message");
+            try
+            {
+                var result = await _contactService.SaveAndSendAsync(dto);
+                return Ok(new { message = "Message sent successfully. Thank you! 🙌" });
+            }
+            catch (Exception ex)
+            {
+                // SQL trigger’daki RAISERROR mesajı buraya düşer
+                return BadRequest(new { error = ex.Message });
+            }
         }
     }
 }
